@@ -1,0 +1,42 @@
+{
+  "name": "@saltcorn/screenshot-helper",
+  "version": "0.1.0",
+  "description": "Paste screenshots via Ctrl+V, store them as public files, and browse them in a gallery",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"no tests\" && exit 0"
+  },
+  "keywords": [
+    "saltcorn",
+    "saltcorn-plugin",
+    "screenshot",
+    "clipboard",
+    "gallery",
+    "file-upload"
+  ],
+  "author": "Patrick Pasch",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/saltcorn/screenshot-helper.git"
+  },
+  "bugs": {
+    "url": "https://github.com/saltcorn/screenshot-helper/issues"
+  },
+  "homepage": "https://github.com/saltcorn/screenshot-helper#readme",
+  "dependencies": {},
+  "eslintConfig": {
+    "extends": "eslint:recommended",
+    "parserOptions": {
+      "ecmaVersion": 2022
+    },
+    "env": {
+      "node": true,
+      "es6": true
+    },
+    "rules": {
+      "no-unused-vars": "off",
+      "no-empty": "warn"
+    }
+  }
+}
