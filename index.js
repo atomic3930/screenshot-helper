@@ -11,16 +11,12 @@ const {
   a,
   small,
 } = require("@saltcorn/markup/tags");
-const Table = require("@saltcorn/data/models/table");
-const Field = require("@saltcorn/data/models/field");
 const File = require("@saltcorn/data/models/file");
 const Form = require("@saltcorn/data/models/form");
 const Workflow = require("@saltcorn/data/models/workflow");
-const { getState } = require("@saltcorn/data/db/state");
 const crypto = require("crypto");
 
-const TABLE_NAME = "screenshot-helper";
-const FOLDER = "/";
+const FOLDER = "/screenshot-helper";
 const MIN_ROLE_PUBLIC = 100;
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 const ALLOWED_MIME_TYPES = new Set([
@@ -32,55 +28,10 @@ const ALLOWED_MIME_TYPES = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
-// Idempotent table creation
-// ---------------------------------------------------------------------------
-async function ensureTable() {
-  let table = Table.findOne({ name: TABLE_NAME });
-  if (table) return table;
-
-  // Table not in cache — try to create it; it might already exist in the DB
-  // (e.g. created during a previous preview run but cache wasn't refreshed)
-  try {
-    await Table.create(TABLE_NAME);
-  } catch (e) {
-    if (!e.message?.includes("already exists")) throw e;
-    // Relation already exists in DB — that's fine, continue
-  }
-
-  // Force in-memory cache refresh so Table.findOne can see the table
-  const state = getState();
-  await (state.refresh_tables?.() ?? state.refresh?.() ?? Promise.resolve());
-
-  table = Table.findOne({ name: TABLE_NAME });
-  if (!table) throw new Error(`Table "${TABLE_NAME}" not found after creation`);
-
-  // Add any missing fields (idempotent — skip fields that already exist)
-  const existingFields = new Set((table.fields || []).map((f) => f.name));
-  for (const [name, label, required] of [
-    ["filename", "Filename", true],
-    ["url", "URL", true],
-    ["mime_type", "MIME type", false],
-  ]) {
-    if (!existingFields.has(name)) {
-      await Field.create({
-        table_id: table.id,
-        table,
-        name,
-        label,
-        type: "String",
-        required,
-      });
-    }
-  }
-
-  return table;
-}
-
-// ---------------------------------------------------------------------------
 // Gallery card HTML (used server-side and mirrored client-side)
 // ---------------------------------------------------------------------------
-function galleryCard(row, rnd) {
-  const serveUrl = "/files/serve/" + row.url;
+function galleryCard(file, rnd) {
+  const serveUrl = "/files/serve/" + file.path_to_serve;
   return div(
     { class: "col-xl-3 col-lg-4 col-md-6 mb-4" },
     div(
@@ -91,16 +42,16 @@ function galleryCard(row, rnd) {
           src: serveUrl,
           class: "card-img-top",
           style: "object-fit:cover;height:180px;",
-          alt: row.filename,
+          alt: file.filename,
         })
       ),
       div(
         { class: "card-body p-2" },
-        small({ class: "text-muted d-block mb-2 text-truncate" }, row.filename),
+        small({ class: "text-muted d-block mb-2 text-truncate" }, file.filename),
         button(
           {
             class: "btn btn-sm btn-outline-primary w-100 mb-1",
-            onclick: `scCopyLink_${rnd}('${row.url.replace(/'/g, "\\'")}', this)`,
+            onclick: `scCopyLink_${rnd}('${file.path_to_serve.replace(/'/g, "\\'")}', this)`,
           },
           i({ class: "fas fa-link" }),
           " Copy link"
@@ -108,7 +59,7 @@ function galleryCard(row, rnd) {
         button(
           {
             class: "btn btn-sm btn-outline-danger w-100",
-            onclick: `scDelete_${rnd}(${row.id}, this)`,
+            onclick: `scDelete_${rnd}(${file.id}, this)`,
           },
           i({ class: "fas fa-trash" }),
           " Delete"
@@ -122,12 +73,14 @@ function galleryCard(row, rnd) {
 // run — main view renderer
 // ---------------------------------------------------------------------------
 const run = async (table_id, viewname, cfg, state, { req }) => {
-  const table = await ensureTable();
-  const rows = await table.getRows({}, { orderBy: "id", orderDesc: true });
+  const files = await File.find(
+    { location: FOLDER },
+    { orderBy: "id", orderDesc: true }
+  );
 
   const rnd = Math.random().toString(36).slice(2, 8);
 
-  const galleryCards = rows.map((row) => galleryCard(row, rnd)).join("");
+  const galleryCards = files.map((f) => galleryCard(f, rnd)).join("");
 
   // Embed CSRF token server-side as a reliable fallback
   const csrfToken = req.csrfToken ? req.csrfToken() : "";
@@ -159,7 +112,7 @@ const run = async (table_id, viewname, cfg, state, { req }) => {
     var ext = (mimeType.split('/')[1] || 'png').split('+')[0];
 
     var status = document.getElementById('sc-status-' + RND);
-    if (status) status.innerHTML = '<div class="alert alert-info py-1 mb-0">Uploading\u2026</div>';
+    if (status) status.innerHTML = '<div class="alert alert-info py-1 mb-0">Uploading\\u2026</div>';
 
     var formData = new FormData();
     formData.append('file', blob, 'screenshot.' + ext);
@@ -215,7 +168,7 @@ const run = async (table_id, viewname, cfg, state, { req }) => {
     document.body.removeChild(ta);
   }
 
-  // Delete screenshot (no confirmation)
+  // Delete screenshot
   window['scDelete_' + RND] = function(id, btn) {
     view_post(VN, 'delete_screenshot', { id: id }, function(res) {
       if (res.error) {
@@ -275,7 +228,7 @@ const run = async (table_id, viewname, cfg, state, { req }) => {
       ),
       h5(
         { class: "mb-3" },
-        "Saved screenshots (" + rows.length + ")"
+        "Saved screenshots (" + files.length + ")"
       ),
       div({ class: "row", id: "sc-gallery-" + rnd }, galleryCards),
       script(clientJs)
@@ -306,8 +259,6 @@ const upload = async (table_id, viewname, cfg, body, { req }) => {
     const uuid = crypto.randomUUID();
     const filename = `${uuid}.${ext}`;
 
-    // Use from_req_files so the temp file is moved via mv() rather than
-    // written from rawFile.data (which is empty when useTempFiles is active)
     const file = await File.from_req_files(
       { ...rawFile, name: filename },
       req.user?.id || null,
@@ -315,15 +266,7 @@ const upload = async (table_id, viewname, cfg, body, { req }) => {
       FOLDER
     );
 
-    // Save metadata row
-    const table = await ensureTable();
-    const id = await table.insertRow({
-      filename,
-      url: file.path_to_serve,
-      mime_type: mimeType,
-    });
-
-    return { json: { success: true, url: file.path_to_serve, id, filename } };
+    return { json: { success: true, url: file.path_to_serve, id: file.id, filename } };
   } catch (e) {
     return { json: { error: e.message } };
   }
@@ -334,22 +277,13 @@ const upload = async (table_id, viewname, cfg, body, { req }) => {
 // ---------------------------------------------------------------------------
 const delete_screenshot = async (table_id, viewname, cfg, body, { req }) => {
   try {
-    const table = Table.findOne({ name: TABLE_NAME });
-    if (!table) return { json: { error: "Table not found" } };
-
     const id = parseInt(body.id, 10);
     if (isNaN(id)) return { json: { error: "Invalid ID" } };
 
-    const row = await table.getRow({ id });
-    if (!row) return { json: { error: "Row not found" } };
+    const file = await File.findOne(id);
+    if (!file) return { json: { error: "File not found" } };
 
-    // Try to delete the file (graceful — don't fail if it's already gone)
-    try {
-      const files = await File.find({ filename: row.filename });
-      if (files.length > 0) await files[0].delete();
-    } catch (_) {}
-
-    await table.deleteRows({ id });
+    await file.delete();
     return { json: { success: true } };
   } catch (e) {
     return { json: { error: e.message } };
