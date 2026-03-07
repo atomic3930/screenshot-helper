@@ -1,5 +1,5 @@
 {
-  "name": "@saltcorn/screenshot-helper",
+  "name": "screenshot-helper",
   "version": "0.1.0",
   "description": "Paste screenshots via Ctrl+V, store them as public files, and browse them in a gallery",
   "main": "index.js",

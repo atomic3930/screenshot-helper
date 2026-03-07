@@ -74,7 +74,7 @@ function galleryCard(file, rnd) {
 // ---------------------------------------------------------------------------
 const run = async (table_id, viewname, cfg, state, { req }) => {
   const files = await File.find(
-    { location: FOLDER },
+    { folder: FOLDER },
     { orderBy: "id", orderDesc: true }
   );
 
